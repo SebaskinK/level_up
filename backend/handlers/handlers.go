@@ -343,28 +343,7 @@ func PlayCard(c *gin.Context) {
 		return
 	}
 
-	// Log the play action
-	game, _ := models.GetGame(gameID)
-	if game != nil {
-		playerSeat := 0
-		for i, id := range game.PlayerIDs {
-			if id == user.ID {
-				playerSeat = i + 1
-				break
-			}
-		}
-
-		models.LogGameAction(models.GameActionLogRequest{
-			GameID:     gameID,
-			ActionType: "play_cards",
-			PlayerSeat: playerSeat,
-			PlayerID:   user.ID,
-			ActionData: map[string]interface{}{
-				"cardIndices": cardIndices,
-			},
-			ResultData: result,
-		})
-	}
+	// 出牌日志已在 models.PlayCardsGame 里记录（带完整牌面），这里不再重复记一条。
 
 	c.JSON(http.StatusOK, gin.H{
 		"success": true,
@@ -779,28 +758,7 @@ func DiscardBottomCardsHandler(c *gin.Context) {
 		return
 	}
 
-	// Log the discard action
-	game, _ := models.GetGame(gameID)
-	if game != nil {
-		playerSeat := 0
-		for i, id := range game.PlayerIDs {
-			if id == user.ID {
-				playerSeat = i + 1
-				break
-			}
-		}
-
-		models.LogGameAction(models.GameActionLogRequest{
-			GameID:     gameID,
-			ActionType: "discard_bottom",
-			PlayerSeat: playerSeat,
-			PlayerID:   user.ID,
-			ActionData: map[string]interface{}{
-				"cardIndices": cardIndices,
-			},
-			ResultData: table,
-		})
-	}
+	// 扣底日志已在 models.DiscardBottomCards 里记录（带完整牌面与牌桌快照），这里不再重复记一条。
 
 	c.JSON(http.StatusOK, gin.H{
 		"success": true,
@@ -943,11 +901,9 @@ func GetGameTableHandler(c *gin.Context) {
 				var isAI bool
 
 				var level string = "2" // 默认等级
-				if strings.HasPrefix(playerID, "ai_") {
+				if models.IsAIUserID(playerID) {
 					isAI = true
-					// Extract AI number from playerID
-					aiNum := strings.TrimPrefix(playerID, "ai_")
-					username = fmt.Sprintf("AI-%s", aiNum)
+					username = fmt.Sprintf("AI-%s", models.AISeatLabel(playerID))
 				} else if u, err := models.GetUserByID(playerID); err == nil {
 					username = u.Username
 					level = u.Level
@@ -982,7 +938,7 @@ func GetGameTableHandler(c *gin.Context) {
 			if hand, ok := table.PlayerHands[seat]; ok {
 				username := fmt.Sprintf("玩家%d", seat)
 				level := "2" // 默认等级
-				isAI := strings.HasPrefix(hand.UserID, "ai_")
+				isAI := models.IsAIUserID(hand.UserID)
 				if isAI {
 					username = fmt.Sprintf("AI-%d", seat)
 				} else if u, err := models.GetUserByID(hand.UserID); err == nil {

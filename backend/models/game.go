@@ -702,6 +702,7 @@ func CallFriendCard(gameID, userID, suit, value string, position int) (*GameTabl
 			table.CurrentPlayer = table.DealerSeat
 			table.CallPhase = "finished"
 			table.UpdatedAt = time.Now()
+			logPlayingStartSnapshot(table)
 		}
 
 		// Save the updated table state
@@ -740,6 +741,7 @@ func CallFriendCard(gameID, userID, suit, value string, position int) (*GameTabl
 		table.CurrentPlayer = table.DealerSeat
 		table.CallPhase = "finished"
 		table.UpdatedAt = time.Now()
+		logPlayingStartSnapshot(table)
 	}
 
 	// Save the updated table state
@@ -940,11 +942,16 @@ func determineCardType(cards []Card, trumpSuit, trumpRank string) string {
 }
 
 // canBeatCards 判断 cards 是否能击败 currentWinnerCards
-// 规则：主牌（含王）> 副牌
+// 规则：主牌（含王）> 副牌；副牌之间只有跟上领出花色的才算数（RULE.md 5.3 规则4 / 5.4）
 func canBeatCards(cards []Card, currentWinnerCards []Card, leadSuit, trumpSuit, trumpRank string) bool {
+	// 垫出去的其他副牌无法参与比较，领出方获胜
+	if !playCanCompete(cards, leadSuit, trumpSuit, trumpRank) {
+		return false
+	}
+
 	// 判断两组牌的花色类型
-	cardsType := getPlayType(cards, trumpSuit)
-	winnerType := getPlayType(currentWinnerCards, trumpSuit)
+	cardsType := getPlayType(cards, trumpSuit, trumpRank)
+	winnerType := getPlayType(currentWinnerCards, trumpSuit, trumpRank)
 
 	// 主牌 > 副牌
 	if cardsType == "trump" && winnerType != "trump" {
@@ -961,15 +968,30 @@ func canBeatCards(cards []Card, currentWinnerCards []Card, leadSuit, trumpSuit, 
 	return maxCard1 > maxCard2
 }
 
-// getPlayType 判断出牌类型：trump（主牌）或 suit（副牌）
-func getPlayType(cards []Card, trumpSuit string) string {
+// playCanCompete 判断一手牌有没有资格参与比大小。
+// 只有「整手都是主牌」或「整手都是领出花色」才算数；
+// 花色不齐的那一手是垫牌，按 RULE.md 5.4 无法毙牌。
+func playCanCompete(cards []Card, leadSuit, trumpSuit, trumpRank string) bool {
+	allTrump := true
+	allLeadSuit := true
 	for _, card := range cards {
-		// 王是主牌的一部分
-		if card.Type == "joker" {
-			return "trump"
+		if isTrumpCard(card, trumpSuit, trumpRank) {
+			allLeadSuit = false
+		} else {
+			allTrump = false
+			if card.Suit != leadSuit {
+				allLeadSuit = false
+			}
 		}
-		// 主花色牌是主牌
-		if card.Suit == trumpSuit {
+	}
+	return allTrump || allLeadSuit
+}
+
+// getPlayType 判断出牌类型：trump（主牌）或 suit（副牌）
+// 王、级牌、主花色牌都算主牌
+func getPlayType(cards []Card, trumpSuit, trumpRank string) string {
+	for _, card := range cards {
+		if isTrumpCard(card, trumpSuit, trumpRank) {
 			return "trump"
 		}
 	}
@@ -1010,7 +1032,8 @@ func getCardRank(card Card, trumpSuit, trumpRank string) int {
 	}
 
 	// 4. 副级牌（其他花色的级牌）
-	// 按花色顺序：spades > hearts > diamonds > clubs
+	// RULE.md 只规定「主级牌 > 副级牌」，没有规定三张副级牌之间谁大，
+	// 这里沿用历史顺序，不要改成机器人选牌用的「黑红花白」——那只是选牌偏好，不是牌力规则。
 	if card.Value == trumpRank {
 		suitOrder := map[string]int{
 			"spades":   3,
@@ -1394,28 +1417,17 @@ func AIPlayTurn(gameID string) (*GameTable, error) {
 		return nil, fmt.Errorf("游戏不在进行中")
 	}
 
-	// Check if this is a single-player game
-	singlePlayer := isSinglePlayerGame(table)
-	fmt.Printf("DEBUG AIPlayTurn: singlePlayer=%v, CurrentPlayer=%d, Status=%s\n", singlePlayer, table.CurrentPlayer, table.Status)
-
-	// Keep playing while it's an AI player's turn (seats 2-5)
-	// In single-player mode, also play for the human (seat 1)
+	// 只替机器人出牌，轮到真人就停手（单人和多人模式一视同仁）
 	maxIterations := 50 // Prevent infinite loop (increased to handle multiple rounds)
 	iterations := 0
 
 	for iterations < maxIterations {
-		fmt.Printf("DEBUG AIPlayTurn iteration %d: CurrentPlayer=%d, singlePlayer=%v\n", iterations, table.CurrentPlayer, singlePlayer)
-
-		// In multiplayer mode, stop at human player (seat 1)
-		// In single-player mode, play for everyone
-		if !singlePlayer && table.CurrentPlayer == 1 {
-			fmt.Printf("DEBUG AIPlayTurn: Breaking at human player (multiplayer mode)\n")
-			break
-		}
-
 		hand, ok := table.PlayerHands[table.CurrentPlayer]
 		if !ok {
 			return nil, fmt.Errorf("player %d not found", table.CurrentPlayer)
+		}
+		if !IsAIUserID(hand.UserID) {
+			break
 		}
 
 		fmt.Printf("DEBUG AIPlayTurn: Player %d (%s) has %d cards\n", table.CurrentPlayer, hand.UserID, len(hand.Cards))
@@ -3555,10 +3567,9 @@ func validateFollowSuit(cards []Card, leadCards []Card, leadCardType string, han
 	}
 
 	// 分析手牌中的牌型（只看同花色牌）
-	valueCounts := make(map[string]int)
-	for _, card := range handSuitCards {
-		valueCounts[card.Value]++
-	}
+	// 对子/三张必须同花色且同点数（RULE.md 5.2），所以按「花色+点数」统计，
+	// 不能只按点数——领出主牌时同花色牌会横跨多个花色（王、各花色级牌、主花色牌）。
+	valueCounts := suitValueCounts(handSuitCards)
 
 	hasTriple := false
 	hasPair := false
@@ -3572,7 +3583,7 @@ func validateFollowSuit(cards []Card, leadCards []Card, leadCardType string, han
 		}
 	}
 	if len(handSuitCards) >= 4 {
-		hasTractor = containsTractor(handSuitCards, valueCounts, trumpSuit, trumpRank)
+		hasTractor = containsTractor(handSuitCards, trumpRank)
 	}
 
 	// 分析玩家出的牌型（传递 trump 上下文以正确识别拖拉机）
@@ -3588,12 +3599,8 @@ func validateFollowSuit(cards []Card, leadCards []Card, leadCardType string, han
 		// 没有三张有对子必须跟对子（凑够3张：对子+1张补牌）
 		if !hasTriple && hasPair {
 			// 检查出的牌中是否包含同花色对子（不要求整体牌型为pair，允许pair+散牌凑够3张）
-			playedSuitValueCounts := make(map[string]int)
-			for _, card := range playedSuitCards {
-				playedSuitValueCounts[card.Value]++
-			}
 			hasPlayedPair := false
-			for _, count := range playedSuitValueCounts {
+			for _, count := range suitValueCounts(playedSuitCards) {
 				if count >= 2 {
 					hasPlayedPair = true
 					break
@@ -3633,32 +3640,47 @@ func validateFollowSuit(cards []Card, leadCards []Card, leadCardType string, han
 	return nil
 }
 
-// containsTractor 检查手牌中是否包含拖拉机
-// 拖拉机是连续的对子或三张
-func containsTractor(handSuitCards []Card, valueCounts map[string]int, trumpSuit, trumpRank string) bool {
-	// 拖拉机需要至少2组对子或2组三张
-	// 首先找出所有有对子或三张的点数
-	pairs := []string{}   // 有对子的点数
-	triples := []string{} // 有三张的点数
+// suitValueCounts 按「花色+点数」统计张数。
+// 对子/三张必须同花色且同点数（RULE.md 5.2），所以不能只按点数统计。
+func suitValueCounts(cards []Card) map[string]int {
+	counts := make(map[string]int)
+	for _, card := range cards {
+		counts[card.Suit+"|"+card.Value]++
+	}
+	return counts
+}
 
-	for value, count := range valueCounts {
-		if count >= 3 {
-			triples = append(triples, value)
-		} else if count >= 2 {
-			pairs = append(pairs, value)
-		}
+// containsTractor 检查手牌中是否包含拖拉机
+// 拖拉机是同花色内连续的对子或三张，所以按花色分别检查
+func containsTractor(handSuitCards []Card, trumpRank string) bool {
+	bySuit := make(map[string][]Card)
+	for _, card := range handSuitCards {
+		bySuit[card.Suit] = append(bySuit[card.Suit], card)
 	}
 
-	// 检查三张是否能构成拖拉机（至少2组连续的三张）
-	if len(triples) >= 2 {
-		if hasConsecutiveValues(triples, trumpRank) {
+	for _, cards := range bySuit {
+		valueCounts := make(map[string]int)
+		for _, card := range cards {
+			valueCounts[card.Value]++
+		}
+
+		pairs := []string{}   // 有对子的点数
+		triples := []string{} // 有三张的点数
+		for value, count := range valueCounts {
+			if count >= 3 {
+				triples = append(triples, value)
+			} else if count >= 2 {
+				pairs = append(pairs, value)
+			}
+		}
+
+		// 检查三张是否能构成拖拉机（至少2组连续的三张）
+		if len(triples) >= 2 && hasConsecutiveValues(triples, trumpRank) {
 			return true
 		}
-	}
 
-	// 检查对子是否能构成拖拉机（至少2组连续的对子）
-	if len(pairs) >= 2 {
-		if hasConsecutiveValues(pairs, trumpRank) {
+		// 检查对子是否能构成拖拉机（至少2组连续的对子）
+		if len(pairs) >= 2 && hasConsecutiveValues(pairs, trumpRank) {
 			return true
 		}
 	}
@@ -4476,12 +4498,25 @@ func tryAICounterCall(table *GameTable, gameID string) bool {
 	return false
 }
 
+// IsAIUserID 判断用户 ID 是否属于机器人。
+// AI ID 历史上出现过 "ai_" 和 "ai-" 两种写法，两种都认。
+func IsAIUserID(userID string) bool {
+	return len(userID) >= 3 && (userID[:3] == "ai_" || userID[:3] == "ai-")
+}
+
+// AISeatLabel 取出 AI 用户 ID 里的座位编号，用于拼显示名。
+func AISeatLabel(userID string) string {
+	if !IsAIUserID(userID) {
+		return ""
+	}
+	return userID[3:]
+}
+
 // isSinglePlayerGame checks if this is a single player game
 func isSinglePlayerGame(table *GameTable) bool {
 	aiCount := 0
 	for _, hand := range table.PlayerHands {
-		// Check for AI prefix (both "ai_" and "ai-" formats)
-		if len(hand.UserID) >= 3 && (hand.UserID[:3] == "ai_" || hand.UserID[:3] == "ai-") {
+		if IsAIUserID(hand.UserID) {
 			aiCount++
 		}
 	}

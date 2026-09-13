@@ -122,7 +122,7 @@ const game = data?.game;
 
     const [showDiscardDialog, setShowDiscardDialog] = useState(false);
     const [showCallFriendDialog, setShowCallFriendDialog] = useState(false);
-    const [showLastTrick, setShowLastTrick] = useState(false); // 是否显示上一轮出牌
+    const [showLastTrick, setShowLastTrick] = useState(true); // 是否显示上一轮出牌(默认显示)
     const [topMenuOpen, setTopMenuOpen] = useState(false); // 顶部三横杠菜单是否展开
 
     // 本地平滑倒计时：服务器只每隔几秒推送，前端本地按秒递减，避免显示卡顿

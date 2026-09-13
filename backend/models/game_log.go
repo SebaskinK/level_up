@@ -4,6 +4,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
+	"log"
 	"time"
 )
 
@@ -57,13 +58,22 @@ func LogGameAction(req GameActionLogRequest) error {
 		}
 	}
 
+	// player_id 有外键约束指向 users，空串不是合法用户 ID，必须转成 NULL
+	var playerID interface{}
+	if req.PlayerID != "" {
+		playerID = req.PlayerID
+	}
+
 	query := `
 		INSERT INTO game_action_logs (game_id, action_type, player_seat, player_id, action_data, result_data)
 		VALUES ($1, $2, $3, $4, $5, $6)
 	`
 
-	_, err = db.Exec(query, req.GameID, req.ActionType, req.PlayerSeat, req.PlayerID, actionDataJSON, resultDataJSON)
+	_, err = db.Exec(query, req.GameID, req.ActionType, req.PlayerSeat, playerID, actionDataJSON, resultDataJSON)
 	if err != nil {
+		// 日志写失败不能拖垮对局，但必须留痕，否则会像之前那样静默丢数据
+		log.Printf("[game-log] 写入失败 game=%s type=%s seat=%d: %v",
+			req.GameID, req.ActionType, req.PlayerSeat, err)
 		return fmt.Errorf("failed to insert game action log: %w", err)
 	}
 
@@ -289,4 +299,29 @@ func GetAllGameReplays(limit, offset int) ([]GameReplay, error) {
 	}
 
 	return replays, nil
+}
+
+// ListRecentPlayedGames 返回最近若干局「有 playing_start 快照、可供重放」的对局 ID。
+func ListRecentPlayedGames(limit int) ([]string, error) {
+	rows, err := db.Query(`
+		SELECT DISTINCT game_id
+		FROM game_action_logs
+		WHERE action_type = 'playing_start'
+		ORDER BY game_id DESC
+		LIMIT $1
+	`, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var ids []string
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		ids = append(ids, id)
+	}
+	return ids, rows.Err()
 }

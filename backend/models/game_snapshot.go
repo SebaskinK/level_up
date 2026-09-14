@@ -1,5 +1,7 @@
 package models
 
+import "time"
+
 // 对局快照日志：把「开打那一刻」的完整牌桌写进 game_action_logs，
 // 这样事后可以脱离内存状态，单靠日志重建整局、逐手校验规则。
 
@@ -88,6 +90,35 @@ func logDealingComplete(table *GameTable, numPlayers int) {
 			"callCountdown": table.CallCountdown,
 			"callRecords":   table.CallRecords,
 			"passedSeats":   table.PassedSeats,
+		},
+	})
+}
+
+// enterFlippingPhase 统一进入「翻底牌定庄」阶段并记日志。
+// 代码里原先有 5 处各自 set CallPhase="flipping"，只有 2 处记了日志，
+// 实际最常走的那条（倒计时归零、无人亮庄）恰好是没记的，导致日志缺一整个阶段。
+func enterFlippingPhase(table *GameTable, reason string) {
+	if table == nil {
+		return
+	}
+	table.CallPhase = "flipping"
+	table.CallCountdown = 0
+	table.FlipStartedAt = time.Now()
+
+	LogGameAction(GameActionLogRequest{
+		GameID:     table.GameID,
+		ActionType: "enter_flipping_phase",
+		PlayerSeat: table.StartingDealerSeat,
+		ActionData: map[string]interface{}{
+			"reason":             reason,
+			"passedSeats":        table.PassedSeats,
+			"callRecords":        table.CallRecords,
+			"startingDealerSeat": table.StartingDealerSeat,
+			"bottomCount":        len(table.BottomCards),
+		},
+		ResultData: map[string]interface{}{
+			"callPhase":    table.CallPhase,
+			"dealingPhase": table.DealingPhase,
 		},
 	})
 }

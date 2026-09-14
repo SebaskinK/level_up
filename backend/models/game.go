@@ -353,9 +353,7 @@ func DealNextCard(gameID string) (*GameTable, bool, error) {
 			}
 			return finalized, true, nil
 		case !hasCall && allPassed:
-			table.CallPhase = "flipping"
-			table.CallCountdown = 0
-			table.FlipStartedAt = time.Now()
+			enterFlippingPhase(table, "发完牌时全员不叫庄")
 		default:
 			table.CallPhase = "counting"
 			table.CallCountdown = 10
@@ -426,9 +424,7 @@ func DealNextCard(gameID string) (*GameTable, bool, error) {
 				}
 				return finalized, true, nil
 			case !hasCall && allPassed:
-				table.CallPhase = "flipping"
-				table.CallCountdown = 0
-				table.FlipStartedAt = time.Now()
+				enterFlippingPhase(table, "发完最后一张时全员不叫庄")
 			default:
 				table.CallPhase = "counting"
 				table.CallCountdown = 10
@@ -599,8 +595,7 @@ func GetTableGame(gameID string) (*GameTable, error) {
 		}
 
 		// 无人亮庄，倒计时结束，进入翻底牌阶段
-		table.CallPhase = "flipping"
-		table.FlipStartedAt = time.Now()
+		enterFlippingPhase(table, "倒计时归零且无人亮庄")
 		log.Printf("[GetTableGame] Countdown ended with no caller, entering flipping phase")
 		activeGames[gameID] = table
 	}
@@ -4347,22 +4342,7 @@ func PassCall(gameID, userID string) (*GameTable, error) {
 		//   倒计时启动并归零，才能进入 flipping。
 		// - 发牌完成后(DealingPhase=="finished")所有人按不叫庄 → 立刻结束倒计时，进入 flipping。
 		if table.DealingPhase == "finished" {
-			table.CallPhase = "flipping"
-			table.CallCountdown = 0
-			table.FlipStartedAt = time.Now()
-
-			LogGameAction(GameActionLogRequest{
-				GameID:     gameID,
-				ActionType: "enter_flipping_phase",
-				PlayerSeat: 0,
-				PlayerID:   "",
-				ActionData: map[string]interface{}{
-					"reason": "all_players_passed",
-				},
-				ResultData: map[string]interface{}{
-					"call_phase": "flipping",
-				},
-			})
+			enterFlippingPhase(table, "全员不叫庄")
 		}
 		// 发牌期间所有人 pass：保持 dealing 阶段不变，等发完牌后由 DealNextCard
 		// 把 CallPhase 切到 counting 并启动 10 秒倒计时，倒计时归零时再由
@@ -4437,23 +4417,7 @@ func CheckAndProcessCountdown(gameID string) (*GameTable, error) {
 	}
 
 	// 情况2：无人亮庄，进入翻底牌阶段
-	table.CallPhase = "flipping"
-	table.FlipStartedAt = time.Now()
-
-	// 记录进入翻底牌阶段的日志
-	LogGameAction(GameActionLogRequest{
-		GameID:     gameID,
-		ActionType: "enter_flipping_phase",
-		PlayerSeat: 0,
-		PlayerID:   "",
-		ActionData: map[string]interface{}{
-			"reason": "countdown_ended_no_caller",
-		},
-		ResultData: map[string]interface{}{
-			"call_phase": "flipping",
-		},
-	})
-
+	enterFlippingPhase(table, "倒计时归零且无人亮庄")
 	table.UpdatedAt = time.Now()
 	activeGames[gameID] = table
 	return table, nil

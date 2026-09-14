@@ -725,24 +725,20 @@ func CheckGameSettlement(gameID string) ([]RuleViolation, error) {
 				add("升级(7.x)", "玩家 %s 的等级 %s→%s 不在 2..A 序列里", r.UserID, r.OldLevel, r.NewLevel)
 				continue
 			}
-			gotUp := ni - oi
-			// A 是顶，升到 A 就封顶，按封顶后的目标等级比
-			wantIdx := oi + wantUp
-			if wantIdx > len(levelOrder)-1 {
-				wantIdx = len(levelOrder) - 1
-			}
+			// 升过 A 之后从 2 循环，所以按「升到哪一档」比，不按差值比
+			wantIdx := (oi + wantUp) % len(levelOrder)
 			if ni != wantIdx {
 				side := "抓分方"
 				if isDealerSide {
 					side = "庄家方"
 				}
-				capped := ""
-				if oi+wantUp > len(levelOrder)-1 {
-					capped = "（封顶到A）"
+				wrapped := ""
+				if oi+wantUp >= len(levelOrder) {
+					wrapped = "（过A后从2循环）"
 				}
-				add("升级(7.x)", "%s玩家 %s：抓分方得 %d 分%s，应升 %d 级到 %s%s，实际 %s→%s 升 %d 级",
-					side, r.UserID, score, soloTag(isSolo), wantUp, levelOrder[wantIdx], capped,
-					r.OldLevel, r.NewLevel, gotUp)
+				add("升级(7.x)", "%s玩家 %s：抓分方得 %d 分%s，应升 %d 级到 %s%s，实际 %s→%s",
+					side, r.UserID, score, soloTag(isSolo), wantUp, levelOrder[wantIdx], wrapped,
+					r.OldLevel, r.NewLevel)
 			}
 		}
 	}

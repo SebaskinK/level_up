@@ -5003,13 +5003,14 @@ func AutoCallForDealer(gameID string) (*GameTable, error) {
 	return nil, fmt.Errorf("human player not found")
 }
 
-// upgradeLevel upgrades a player's level by the specified number of levels
+// upgradeLevel 从 currentLevel 往上升 levelsUp 级。
+// 级别序列 2→3→…→K→A 共 13 档，升过 A 之后从 2 接着往上循环，不截断在 A。
+// 例：Q 升 3 级 → K → A → 2。
 func upgradeLevel(currentLevel string, levelsUp int) string {
 	if levelsUp <= 0 {
 		return currentLevel
 	}
 
-	// Level progression: 2 -> 3 -> 4 -> 5 -> 6 -> 7 -> 8 -> 9 -> 10 -> J -> Q -> K -> A -> (win)
 	levels := []string{"2", "3", "4", "5", "6", "7", "8", "9", "10", "J", "Q", "K", "A"}
 
 	currentIndex := -1
@@ -5024,12 +5025,7 @@ func upgradeLevel(currentLevel string, levelsUp int) string {
 		return currentLevel
 	}
 
-	newIndex := currentIndex + levelsUp
-	if newIndex >= len(levels) {
-		return "A" // Max level
-	}
-
-	return levels[newIndex]
+	return levels[(currentIndex+levelsUp)%len(levels)]
 }
 
 // ==================== 玩家准备相关函数 ====================

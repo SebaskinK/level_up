@@ -108,12 +108,7 @@ func IncrementUserLosses(userID string) error {
 
 // GetNextLevel returns the next level after the current one
 func GetNextLevel(currentLevel string) string {
-	for i, level := range LevelOrder {
-		if level == currentLevel && i < len(LevelOrder)-1 {
-			return LevelOrder[i+1]
-		}
-	}
-	return currentLevel // Already at max level
+	return GetLevelAfter(currentLevel, 1)
 }
 
 // GetLevelAfter returns the level after advancing count levels
@@ -130,12 +125,8 @@ func GetLevelAfter(currentLevel string, count int) string {
 		return currentLevel
 	}
 
-	newIndex := currentIndex + count
-	if newIndex >= len(LevelOrder) {
-		return LevelOrder[len(LevelOrder)-1] // Max level
-	}
-
-	return LevelOrder[newIndex]
+	// 升过 A 之后从 2 接着往上循环，不截断在 A
+	return LevelOrder[(currentIndex+count)%len(LevelOrder)]
 }
 
 // isDuplicateError checks if the error is a duplicate key error

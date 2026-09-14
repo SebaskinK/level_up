@@ -316,3 +316,36 @@ func TestWinnerThresholdAt120(t *testing.T) {
 		}
 	}
 }
+
+// 升过 A 之后从 2 接着往上循环，不截断在 A
+func TestUpgradeLevelWrapsAroundPastAce(t *testing.T) {
+	cases := []struct {
+		from string
+		up   int
+		want string
+	}{
+		{"2", 1, "3"},
+		{"K", 1, "A"},
+		{"Q", 3, "2"}, // Q→K→A→2
+		{"A", 1, "2"}, // A 之后回到 2
+		{"A", 2, "3"},
+		{"K", 9, "9"},  // K(11) + 9 = 20 % 13 = 7 → "9"
+		{"10", 9, "6"}, // 10(8) + 9 = 17 % 13 = 4 → "6"
+		{"2", 13, "2"}, // 绕一整圈回到原点
+	}
+	for _, c := range cases {
+		if got := upgradeLevel(c.from, c.up); got != c.want {
+			t.Errorf("%s 升 %d 级应为 %s，实际 %s", c.from, c.up, c.want, got)
+		}
+	}
+}
+
+// 独打大光升 9 级，从任意起点都不该被截断
+func TestSoloGrandSlamFromHighLevel(t *testing.T) {
+	for _, from := range []string{"J", "Q", "K", "A"} {
+		got := upgradeLevel(from, CalculateLevelUp(0, true, true))
+		if got == "A" && from != "9" {
+			t.Errorf("%s 升 9 级停在 A，说明还在截断", from)
+		}
+	}
+}

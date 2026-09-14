@@ -372,6 +372,9 @@ func DealNextCard(gameID string) (*GameTable, bool, error) {
 
 		log.Printf("[DealNextCard] Dealing complete for game %s, entering calling phase (countdown=%d, phase=%s)",
 			gameID, table.CallCountdown, table.CallPhase)
+
+		logDealingComplete(table, numPlayers)
+
 		return table, true, nil
 	}
 
@@ -417,6 +420,7 @@ func DealNextCard(gameID string) (*GameTable, bool, error) {
 			case isMaxCalled:
 				table.UpdatedAt = time.Now()
 				activeGames[gameID] = table
+				logDealingComplete(table, numPlayers)
 				finalized, ferr := finalizeDealerAndStartPlaying(table)
 				if ferr != nil {
 					return finalized, true, ferr
@@ -442,6 +446,7 @@ func DealNextCard(gameID string) (*GameTable, bool, error) {
 
 		log.Printf("[DealNextCard] Dealing complete for game %s, entering calling phase (countdown=%d, phase=%s)",
 			gameID, table.CallCountdown, table.CallPhase)
+		logDealingComplete(table, numPlayers)
 		return table, true, nil
 	}
 
@@ -1279,6 +1284,10 @@ func CreateSinglePlayerGame(name, hostID string) (*GameState, error) {
 		return nil, err
 	}
 
+	seats := []map[string]interface{}{
+		{"seat": 1, "userId": hostID, "isAI": false},
+	}
+
 	// Add AI players for seats 2-5
 	// Use simpler AI IDs that are consistent across games
 	// Create AI players - reuse existing AI users or create new ones
@@ -1307,7 +1316,23 @@ func CreateSinglePlayerGame(name, hostID string) (*GameState, error) {
 		if err != nil {
 			return nil, fmt.Errorf("failed to add AI player to seat %d: %w", seatNumber, err)
 		}
+		seats = append(seats, map[string]interface{}{"seat": seatNumber, "userId": aiID, "isAI": true})
 	}
+
+	LogGameAction(GameActionLogRequest{
+		GameID:     id,
+		ActionType: "game_create",
+		PlayerSeat: 1,
+		PlayerID:   hostID,
+		ActionData: map[string]interface{}{
+			"name":       name,
+			"mode":       "singleplayer",
+			"hostId":     hostID,
+			"maxPlayers": 5,
+			"seats":      seats,
+		},
+		ResultData: map[string]interface{}{"status": "waiting"},
+	})
 
 	return GetGame(id)
 }
@@ -1389,6 +1414,35 @@ func StartSinglePlayerGame(gameID, hostID string) (*GameTable, error) {
 
 	// Update game status in database
 	UpdateGameStatus(gameID, "playing")
+
+	startSeats := make([]map[string]interface{}, 0, len(table.PlayerHands))
+	for seat := 1; seat <= 5; seat++ {
+		if h, ok := table.PlayerHands[seat]; ok {
+			startSeats = append(startSeats, map[string]interface{}{
+				"seat": seat, "userId": h.UserID, "isAI": IsAIUserID(h.UserID),
+			})
+		}
+	}
+	LogGameAction(GameActionLogRequest{
+		GameID:     gameID,
+		ActionType: "game_start",
+		PlayerSeat: startingDealer,
+		PlayerID:   hostID,
+		ActionData: map[string]interface{}{
+			"mode":                "singleplayer",
+			"currentLevel":        game.CurrentLevel,
+			"trumpRank":           table.TrumpRank,
+			"startingDealerSeat":  startingDealer,
+			"totalCardsPerPlayer": table.TotalCardsPerPlayer,
+			"bottomCards":         bottomCards,
+			"seats":               startSeats,
+		},
+		ResultData: map[string]interface{}{
+			"status":       table.Status,
+			"dealingPhase": table.DealingPhase,
+			"deckSize":     len(allCards),
+		},
+	})
 
 	// 注意：发牌过程中前端会按 1 秒/张轮询 /deal-next，
 	// 发牌完成后 DealNextCard 内会自动为人类玩家亮级牌（见 autoCallForHumanIfPossible）。
@@ -2686,17 +2740,39 @@ func PlayCardsGame(gameID, userID string, cardIndices []int) (*PlayResult, error
 			}
 
 			// Add bottom cards to score if non-host team won last trick (抠底)
+			bottomKicked := false
+			bottomMultiplier := 0
+			bottomPoints := 0
 			if winner != table.DealerSeat && (!table.FriendRevealed || winner != table.FriendSeat) {
 				// Non-host team won last trick - 根据抠底牌型计算倍数
 				if table.BottomCards != nil {
-					multiplier := calculateBottomCardsMultiplier(winnerCards, table)
+					bottomKicked = true
+					bottomMultiplier = calculateBottomCardsMultiplier(winnerCards, table)
 					for _, bottomCard := range table.BottomCards {
-						totalPoints += getCardPoints(bottomCard) * multiplier
+						bottomPoints += getCardPoints(bottomCard) * bottomMultiplier
 					}
-					// 记录抠底信息
-					fmt.Printf("抠底：赢家=%d，牌型=%s，倍数=%d\n", winner, lastTrickCardType, multiplier)
+					totalPoints += bottomPoints
 				}
 			}
+			LogGameAction(GameActionLogRequest{
+				GameID:     gameID,
+				ActionType: "bottom_kick",
+				PlayerSeat: winner,
+				PlayerID:   "",
+				ActionData: map[string]interface{}{
+					"kicked":         bottomKicked,
+					"winnerSeat":     winner,
+					"dealerSeat":     table.DealerSeat,
+					"friendSeat":     table.FriendSeat,
+					"lastTrickType":  lastTrickCardType,
+					"lastTrickCards": winnerCards,
+					"bottomCards":    table.BottomCards,
+				},
+				ResultData: map[string]interface{}{
+					"multiplier":   bottomMultiplier,
+					"bottomPoints": bottomPoints,
+				},
+			})
 
 			result.FinalScore = totalPoints
 
@@ -4691,6 +4767,26 @@ func finalizeDealerAndStartPlaying(table *GameTable) (*GameTable, error) {
 	table.Status = "discarding"
 	table.CallPhase = "discarding"
 	table.UpdatedAt = time.Now()
+
+	LogGameAction(GameActionLogRequest{
+		GameID:     table.GameID,
+		ActionType: "dealer_settled",
+		PlayerSeat: table.DealerSeat,
+		ActionData: map[string]interface{}{
+			"dealerSeat":         table.DealerSeat,
+			"trumpSuit":          table.TrumpSuit,
+			"trumpRank":          table.TrumpRank,
+			"callRecords":        table.CallRecords,
+			"passedSeats":        table.PassedSeats,
+			"flippedBottomCards": table.FlippedBottomCards,
+			"startingDealerSeat": table.StartingDealerSeat,
+		},
+		ResultData: map[string]interface{}{
+			"status":    table.Status,
+			"callPhase": table.CallPhase,
+			"byFlip":    len(table.CallRecords) == 0,
+		},
+	})
 
 	// 单人模式：如果庄家是AI，自动扣底并叫朋友
 	if isSinglePlayerGame(table) && table.DealerSeat != 1 {

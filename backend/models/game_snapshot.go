@@ -54,3 +54,40 @@ func logPlayingStartSnapshot(table *GameTable) {
 func seatKey(seat int) string {
 	return string(rune('0' + seat))
 }
+
+// logDealingComplete 在最后一张牌发完时记录一份发牌结果。
+// DealNextCard 有两条「发完了」的分支，两条都要记，否则会漏。
+func logDealingComplete(table *GameTable, numPlayers int) {
+	if table == nil {
+		return
+	}
+
+	hands := make([]map[string]interface{}, 0, numPlayers)
+	for seat := 1; seat <= numPlayers; seat++ {
+		if h, ok := table.PlayerHands[seat]; ok {
+			hands = append(hands, map[string]interface{}{
+				"seat": seat, "userId": h.UserID, "cards": h.Cards,
+			})
+		}
+	}
+
+	LogGameAction(GameActionLogRequest{
+		GameID:     table.GameID,
+		ActionType: "dealing_complete",
+		PlayerSeat: table.StartingDealerSeat,
+		ActionData: map[string]interface{}{
+			"startingDealerSeat": table.StartingDealerSeat,
+			"totalDealt":         table.DealtCardCount,
+			"perPlayer":          table.TotalCardsPerPlayer,
+			"hands":              hands,
+			"bottomCards":        table.BottomCards,
+		},
+		ResultData: map[string]interface{}{
+			"status":        table.Status,
+			"callPhase":     table.CallPhase,
+			"callCountdown": table.CallCountdown,
+			"callRecords":   table.CallRecords,
+			"passedSeats":   table.PassedSeats,
+		},
+	})
+}

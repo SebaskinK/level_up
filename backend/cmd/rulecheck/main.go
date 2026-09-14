@@ -2,9 +2,9 @@ package main
 
 // 规则校验器命令行入口：
 //
-//	go run ./cmd/rulecheck            # 检查最近 5 局
-//	go run ./cmd/rulecheck 10         # 检查最近 10 局
-//	go run ./cmd/rulecheck <gameID>   # 检查指定一局
+//	go run ./cmd/rulecheck             # 检查最近 5 局
+//	go run ./cmd/rulecheck -n 10       # 检查最近 10 局
+//	go run ./cmd/rulecheck <gameID>    # 检查指定的某几局
 import (
 	"fmt"
 	"os"
@@ -36,14 +36,23 @@ func main() {
 		fmt.Println("=== 静态规则检查：✓ 分值与主牌等级序列都对 ===")
 	}
 
+	// 对局 ID 本身也是一长串数字，不能靠"能不能转成数字"来区分，
+	// 用 -n 显式表示"查最近几局"。
 	limit := 5
 	var gameIDs []string
-	if len(os.Args) > 1 {
-		if n, err := strconv.Atoi(os.Args[1]); err == nil {
+	args := os.Args[1:]
+	for i := 0; i < len(args); i++ {
+		if args[i] == "-n" && i+1 < len(args) {
+			n, err := strconv.Atoi(args[i+1])
+			if err != nil || n <= 0 {
+				fmt.Fprintf(os.Stderr, "-n 后面要跟正整数，收到 %q\n", args[i+1])
+				os.Exit(2)
+			}
 			limit = n
-		} else {
-			gameIDs = os.Args[1:]
+			i++
+			continue
 		}
+		gameIDs = append(gameIDs, args[i])
 	}
 
 	if len(gameIDs) == 0 {

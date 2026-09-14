@@ -44,3 +44,6 @@ claude-progress-archive.txt
 feature_list.json
 claude-long.exe
 init.sh
+
+# 规则校验器编译产物
+backend/rulecheck

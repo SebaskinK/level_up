@@ -814,43 +814,13 @@ func StartSinglePlayerGame(c *gin.Context) {
 	})
 }
 
-// PassTurnHandler handles a player passing their turn (不出)
+// PassTurnHandler 已废弃：升级规则里没有「不出牌」，一律返回 400。
 func PassTurnHandler(c *gin.Context) {
-	user, _ := middleware.GetCurrentUser(c)
-	gameID := c.Param("id")
-
-	result, err := models.PassTurn(gameID, user.ID)
-	if err != nil {
+	if _, err := models.PassTurn(c.Param("id"), ""); err != nil {
 		middleware.SendError(c, http.StatusBadRequest, err.Error())
 		return
 	}
-
-	// Log the pass action
-	game, _ := models.GetGame(gameID)
-	if game != nil {
-		playerSeat := 0
-		for i, id := range game.PlayerIDs {
-			if id == user.ID {
-				playerSeat = i + 1
-				break
-			}
-		}
-
-		models.LogGameAction(models.GameActionLogRequest{
-			GameID:     gameID,
-			ActionType: "pass",
-			PlayerSeat: playerSeat,
-			PlayerID:   user.ID,
-			ActionData: nil,
-			ResultData: result,
-		})
-	}
-
-	c.JSON(http.StatusOK, gin.H{
-		"success": true,
-		"result":  result,
-		"message": "Pass successful",
-	})
+	middleware.SendError(c, http.StatusBadRequest, "不支持的操作")
 }
 
 // AIPlayHandler makes AI players play automatically

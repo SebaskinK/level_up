@@ -70,7 +70,6 @@ type GameTable struct {
 	CurrentTrick       []PlayedCard        `json:"currentTrick"`                 // Cards in current trick
 	LastCompletedTrick []PlayedCard        `json:"lastCompletedTrick,omitempty"` // Cards from the previous completed trick
 	TrickLeader        int                 `json:"trickLeader"`                  // Who led the current trick
-	TrickPassCount     int                 `json:"-"`                            // Number of passes this trick
 	TricksWon          [][]Card            `json:"tricksWon"`                    // All tricks won by defender team
 	PlayerHands        map[int]*PlayerHand `json:"playerHands"`                  // Seat -> PlayerHand
 	LastPlay           *PlayResult         `json:"lastPlay"`                     // Last play result
@@ -2331,8 +2330,7 @@ func isTrickComplete(table *GameTable) bool {
 		seatsActed[pc.Seat] = true
 	}
 	totalPlayers := len(table.PlayerHands)
-	passCount := table.TrickPassCount
-	return len(seatsActed)+passCount == totalPlayers && seatsActed[table.TrickLeader]
+	return len(seatsActed) == totalPlayers && seatsActed[table.TrickLeader]
 }
 
 // advanceCallingPlayer advances CurrentPlayer to the next player who hasn't acted
@@ -2357,116 +2355,11 @@ func advanceCallingPlayer(table *GameTable) {
 	}
 }
 
-// PassTurn handles a player passing their turn (不出)
+// PassTurn 已废弃：RULE.md 5.3 规定有牌必须出（有色跟色、色绝了垫任意牌），
+// 升级里不存在"这一手不出"的动作。放着会让一墩少一家，轮次错位、手牌数对不上，
+// 整局后面全乱，所以直接拒绝。
 func PassTurn(gameID, userID string) (*PlayResult, error) {
-	lock := getGameLock(gameID)
-	lock.Lock()
-	defer lock.Unlock()
-
-	table, err := GetTableGame(gameID)
-	if err != nil {
-		return nil, err
-	}
-
-	if table.Status != "playing" {
-		return nil, fmt.Errorf("游戏不在进行中")
-	}
-
-	// Find player's seat
-	var playerSeat int
-	var hand *PlayerHand
-	for seat, h := range table.PlayerHands {
-		if h.UserID == userID {
-			playerSeat = seat
-			hand = h
-			break
-		}
-	}
-
-	if hand == nil {
-		return nil, fmt.Errorf("player not in game")
-	}
-
-	if playerSeat != table.CurrentPlayer {
-		return nil, fmt.Errorf("not your turn")
-	}
-
-	// 不能在首轮出牌时选择不出
-	if len(table.CurrentTrick) == 0 {
-		return nil, fmt.Errorf("cannot pass when leading")
-	}
-
-	// Move to next player (counter-clockwise: 1→5→4→3→2→1)
-	nextPlayer := ((playerSeat - 2 + 5) % 5) + 1
-	table.CurrentPlayer = nextPlayer
-
-	result := &PlayResult{
-		Success:    true,
-		Message:    "Pass",
-		NextPlayer: nextPlayer,
-	}
-
-	LogGameAction(GameActionLogRequest{
-		GameID:     gameID,
-		ActionType: "pass_turn",
-		PlayerSeat: playerSeat,
-		PlayerID:   userID,
-		ActionData: map[string]interface{}{
-			"handCount":  len(hand.Cards),
-			"trickSoFar": len(table.CurrentTrick),
-		},
-		ResultData: map[string]interface{}{
-			"nextPlayer": nextPlayer,
-		},
-	})
-
-	// Count this pass toward the trick completion check
-	table.TrickPassCount++
-
-	fmt.Printf("[DEBUG] PassTurn: playerSeat=%d, CurrentPlayer=%d, trickLen=%d, isComplete=%v\n",
-		playerSeat, table.CurrentPlayer, len(table.CurrentTrick), isTrickComplete(table))
-
-	// Check if trick is complete (all 5 players have played or passed)
-	if isTrickComplete(table) {
-		winner := determineTrickWinner(table.CurrentTrick, table.TrumpSuit, table.TrumpRank)
-		result.TrickComplete = true
-		result.TrickWinner = winner
-
-		// 当轮结束，清除甩牌失败高亮
-		table.ThrowBlocker = 0
-		table.ThrowBlockerCard = ""
-
-		// Collect scoring cards
-		var collectedCards []Card
-		for _, pc := range table.CurrentTrick {
-			if isScoringCard(pc.Card) {
-				collectedCards = append(collectedCards, pc.Card)
-			}
-		}
-
-		// Winner gets the cards
-		if winnerHand, ok := table.PlayerHands[winner]; ok {
-			winnerHand.Collected = append(winnerHand.Collected, collectedCards...)
-		}
-
-		// Clear trick and set winner as next leader
-		// Save current trick to last completed trick before clearing
-		table.LastCompletedTrick = make([]PlayedCard, len(table.CurrentTrick))
-		copy(table.LastCompletedTrick, table.CurrentTrick)
-		table.CurrentTrick = make([]PlayedCard, 0)
-		table.CurrentPlayer = winner
-		table.TrickLeader = winner
-		table.TrickPassCount = 0
-		result.NextPlayer = winner
-	}
-
-	table.LastPlay = result
-	table.UpdatedAt = time.Now()
-
-	// Save the updated table state
-	activeGames[gameID] = table
-
-	return result, nil
+	return nil, fmt.Errorf("升级规则里没有「不出牌」：有领出花色必须跟色，没有该花色可以垫任意牌")
 }
 
 func PlayCardsGame(gameID, userID string, cardIndices []int) (*PlayResult, error) {
@@ -2773,7 +2666,6 @@ func PlayCardsGame(gameID, userID string, cardIndices []int) (*PlayResult, error
 		table.CurrentTrick = make([]PlayedCard, 0)
 		table.CurrentPlayer = winner
 		table.TrickLeader = winner
-		table.TrickPassCount = 0
 
 		// Check if game ended (all cards played)
 		allCardsPlayed := true

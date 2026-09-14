@@ -45,9 +45,6 @@ export const discardBottomCards = (id: string, cardIndices: number[]) =>
 export const playCards = (id: string, data: IPlayCardRequest) =>
   post<IGameResponse>(`/game/${id}/play`, data);
 
-export const passTurn = (id: string) =>
-  post<IGameResponse>(`/game/${id}/pass`);
-
 export const aiPlay = (id: string) =>
   post<IGameResponse>(`/game/${id}/ai-play`);
 

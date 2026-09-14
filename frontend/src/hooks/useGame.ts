@@ -134,17 +134,6 @@ export function usePlayCards(gameId: string) {
   });
 }
 
-export function usePassTurn(gameId: string) {
-  const queryClient = useQueryClient();
-
-  return useMutation({
-    mutationFn: () => gameService.passTurn(gameId),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['gameTable', gameId] });
-    },
-  });
-}
-
 export function useAiPlay(gameId: string) {
   const queryClient = useQueryClient();
 

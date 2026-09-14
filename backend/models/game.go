@@ -4430,6 +4430,12 @@ func tryAICounterCall(table *GameTable, gameID string) bool {
 		return false
 	}
 
+	// 单人模式：四个 NPC 只负责机械式出牌，不参与亮庄/反庄，
+	// 庄家始终是真人玩家（座位1）。
+	if isSinglePlayerGame(table) {
+		return false
+	}
+
 	lastCall := table.CallRecords[len(table.CallRecords)-1]
 	rank := table.TrumpRank
 
@@ -4568,8 +4574,13 @@ func flipNextBottomCardCore(table *GameTable, gameID string) (*GameTable, error)
 	if nextCard.Value == rank {
 		// 找到了级牌，确定庄家
 		// 找出所有打这个级别的玩家，按逆时针顺序选择距离起始发牌人最近的
+		singlePlayer := isSinglePlayerGame(table)
 		var candidates []int
 		for seat, hand := range table.PlayerHands {
+			// 单人模式：NPC 不当庄，庄家只可能是真人玩家
+			if singlePlayer && IsAIUserID(hand.UserID) {
+				continue
+			}
 			// 检查玩家的等级
 			user, err := GetUserByID(hand.UserID)
 			if err == nil && user.Level == rank {
@@ -4705,81 +4716,6 @@ func finalizeDealerAndStartPlaying(table *GameTable) (*GameTable, error) {
 			"byFlip":    len(table.CallRecords) == 0,
 		},
 	})
-
-	// 单人模式：如果庄家是AI，自动扣底并叫朋友
-	if isSinglePlayerGame(table) && table.DealerSeat != 1 {
-		// AI 庄家自动扣底前需要先把底牌并入手牌，使其能从 38 张里选 7 张扣回。
-		ensureDealerHasBottomCards(table)
-		// AI庄家自动扣底：选择最小的7张牌
-		dealerHand, ok := table.PlayerHands[table.DealerSeat]
-		if ok && dealerHand != nil && len(dealerHand.Cards) == 38 {
-			// 找出最小的7张牌（按点数排序）
-			cardValues := map[string]int{
-				"2": 15, "A": 14, "K": 13, "Q": 12, "J": 11,
-				"10": 10, "9": 9, "8": 8, "7": 7, "6": 6,
-				"5": 5, "4": 4, "3": 3, "big": 17, "small": 16,
-			}
-
-			// 创建带索引的牌列表
-			type indexedCard struct {
-				index int
-				value int
-			}
-			cards := make([]indexedCard, len(dealerHand.Cards))
-			for i, card := range dealerHand.Cards {
-				cards[i] = indexedCard{index: i, value: cardValues[card.Value]}
-			}
-
-			// 按点数排序（从小到大）
-			sort.Slice(cards, func(i, j int) bool {
-				return cards[i].value < cards[j].value
-			})
-
-			// 选择最小的7张牌的索引
-			discardIndices := make([]int, 7)
-			for i := 0; i < 7; i++ {
-				discardIndices[i] = cards[i].index
-			}
-
-			// 自动扣底
-			LogGameAction(GameActionLogRequest{
-				GameID:     table.GameID,
-				ActionType: "ai_auto_discard",
-				PlayerSeat: table.DealerSeat,
-				PlayerID:   dealerHand.UserID,
-				ActionData: map[string]interface{}{
-					"strategy":     "lowest7",
-					"handBefore":   len(dealerHand.Cards),
-					"discardIndex": discardIndices,
-				},
-				ResultData: map[string]interface{}{"dealerSeat": table.DealerSeat},
-			})
-			DiscardBottomCards(table.GameID, dealerHand.UserID, discardIndices)
-
-			// 扣底完成后，自动叫朋友：黑桃A第1张
-			// 重新获取table，因为DiscardBottomCards可能已经更新了状态
-			table, _ = GetTableGame(table.GameID)
-			dealerHand = table.PlayerHands[table.DealerSeat]
-			if dealerHand != nil {
-				_, err := CallFriendCard(table.GameID, dealerHand.UserID, "spades", "A", 1)
-				if err != nil {
-					// 如果叫黑桃A失败（可能在叫庄记录中），尝试叫红桃A
-					_, err = CallFriendCard(table.GameID, dealerHand.UserID, "hearts", "A", 1)
-					if err != nil {
-						fmt.Printf("AI auto-call friend failed: %v\n", err)
-						LogGameAction(GameActionLogRequest{
-							GameID:     table.GameID,
-							ActionType: "ai_call_friend_failed",
-							PlayerSeat: table.DealerSeat,
-							PlayerID:   dealerHand.UserID,
-							ActionData: map[string]interface{}{"tried": []string{"spadesA", "heartsA"}},
-							ResultData: map[string]interface{}{"error": err.Error()},
-						})
-					}
-				}
-			}
-		}
-	}
 
 	return table, nil
 }

@@ -406,10 +406,391 @@ func checkTrumpRankOrder(trumpSuit, trumpRank string) []RuleViolation {
 // CheckStaticRules 校验与具体对局无关的规则常量（分值、等级序列）
 func CheckStaticRules() []RuleViolation {
 	out := checkScoringCards()
+	out = append(out, checkLevelUpTable()...)
+	out = append(out, checkBottomMultiplierTable()...)
 	for _, trumpSuit := range []string{"spades", "hearts", "clubs", "diamonds"} {
 		for _, trumpRank := range []string{"2", "5", "10", "K", "A"} {
 			out = append(out, checkTrumpRankOrder(trumpSuit, trumpRank)...)
 		}
 	}
 	return out
+}
+
+// ── 对照 RULE.md 第六、七章的静态检查 ──────────────────────
+
+// checkLevelUpTable 对照 RULE.md 7.2 / 7.3 的升级表
+func checkLevelUpTable() []RuleViolation {
+	var out []RuleViolation
+
+	// RULE.md 7.2 正常局（2打3）
+	normal := []struct {
+		score            int
+		desc             string
+		dealerUp         int // 庄家方升几级
+		defenderWinsHere bool
+	}{
+		{0, "大光", 3, true},
+		{30, "小光", 2, true},
+		{59, "小光", 2, true},
+		{60, "小胜", 1, true},
+		{119, "小胜", 1, true},
+	}
+	for _, c := range normal {
+		got := CalculateLevelUp(c.score, false, true)
+		if got != c.dealerUp {
+			out = append(out, RuleViolation{
+				Kind: "升级表(7.2正常局)",
+				Detail: fmt.Sprintf("抓分方得 %d 分（%s），庄家方应升 %d 级，实际 %d 级",
+					c.score, c.desc, c.dealerUp, got),
+			})
+		}
+	}
+	normalDefender := []struct {
+		score int
+		desc  string
+		up    int
+	}{
+		{120, "反超", 1}, {179, "反超", 1},
+		{180, "大胜", 2}, {239, "大胜", 2},
+		{240, "完胜", 3}, {299, "完胜", 3},
+		{300, "满光", 4},
+	}
+	for _, c := range normalDefender {
+		got := CalculateLevelUp(c.score, false, false)
+		if got != c.up {
+			out = append(out, RuleViolation{
+				Kind: "升级表(7.2正常局)",
+				Detail: fmt.Sprintf("抓分方得 %d 分（%s），抓分方应升 %d 级，实际 %d 级",
+					c.score, c.desc, c.up, got),
+			})
+		}
+	}
+
+	// RULE.md 7.3 独打局（1打4）
+	solo := []struct {
+		score int
+		desc  string
+		up    int
+	}{
+		{0, "大光", 9},
+		{30, "小光", 6}, {59, "小光", 6},
+		{60, "小胜", 3}, {119, "小胜", 3},
+	}
+	for _, c := range solo {
+		got := CalculateLevelUp(c.score, true, true)
+		if got != c.up {
+			out = append(out, RuleViolation{
+				Kind: "升级表(7.3独打局)",
+				Detail: fmt.Sprintf("抓分方得 %d 分（%s），庄家应升 %d 级，实际 %d 级",
+					c.score, c.desc, c.up, got),
+			})
+		}
+	}
+	soloDefender := []struct {
+		score int
+		desc  string
+		up    int
+	}{
+		{120, "反超", 1}, {179, "反超", 1},
+		{180, "惨败", 2}, {300, "惨败", 2},
+	}
+	for _, c := range soloDefender {
+		got := CalculateLevelUp(c.score, true, false)
+		if got != c.up {
+			out = append(out, RuleViolation{
+				Kind: "升级表(7.3独打局)",
+				Detail: fmt.Sprintf("抓分方得 %d 分（%s），抓分方应升 %d 级，实际 %d 级",
+					c.score, c.desc, c.up, got),
+			})
+		}
+	}
+	return out
+}
+
+// checkBottomMultiplierTable 对照 RULE.md 6.2 抠底倍数：倍数 = 2^(n-1)
+func checkBottomMultiplierTable() []RuleViolation {
+	var out []RuleViolation
+	table := &GameTable{TrumpSuit: "hearts", TrumpRank: "2"}
+
+	cases := []struct {
+		name  string
+		cards []Card
+		want  int
+	}{
+		{"单张抠底", []Card{card2("spades", "9")}, 1},
+		{"对子抠底", []Card{card2("spades", "9"), card2("spades", "9")}, 2},
+		{"三张抠底", []Card{card2("spades", "9"), card2("spades", "9"), card2("spades", "9")}, 4},
+		{"连对4张", []Card{
+			card2("spades", "9"), card2("spades", "9"),
+			card2("spades", "10"), card2("spades", "10")}, 8},
+		{"连对6张", []Card{
+			card2("spades", "9"), card2("spades", "9"),
+			card2("spades", "10"), card2("spades", "10"),
+			card2("spades", "J"), card2("spades", "J")}, 32},
+	}
+	for _, c := range cases {
+		got := calculateBottomCardsMultiplier(c.cards, table)
+		if got != c.want {
+			out = append(out, RuleViolation{
+				Kind:   "抠底倍数(6.2)",
+				Detail: fmt.Sprintf("%s（%d张）应为 ×%d，实际 ×%d", c.name, len(c.cards), c.want, got),
+			})
+		}
+	}
+	return out
+}
+
+func card2(suit, value string) Card {
+	return Card{Suit: suit, Value: value, Type: "normal"}
+}
+
+// ── 单局结算核对（RULE.md 6.2 抠底倍数 / 7.2-7.3 升级表）────────
+
+type gameEndResult struct {
+	UserID   string `json:"user_id"`
+	OldLevel string `json:"old_level"`
+	NewLevel string `json:"new_level"`
+	IsWinner bool   `json:"is_winner"`
+	Score    int    `json:"score"`
+}
+
+type bottomKickData struct {
+	Kicked        bool   `json:"kicked"`
+	WinnerSeat    int    `json:"winnerSeat"`
+	DealerSeat    int    `json:"dealerSeat"`
+	LastTrickType string `json:"lastTrickType"`
+	LastTrick     []Card `json:"lastTrickCards"`
+	BottomCards   []Card `json:"bottomCards"`
+}
+
+type bottomKickResult struct {
+	Multiplier   int `json:"multiplier"`
+	BottomPoints int `json:"bottomPoints"`
+}
+
+var levelOrder = []string{"2", "3", "4", "5", "6", "7", "8", "9", "10", "J", "Q", "K", "A"}
+
+func levelIndex(l string) int {
+	for i, v := range levelOrder {
+		if v == l {
+			return i
+		}
+	}
+	return -1
+}
+
+// CheckGameSettlement 核对一局的抠底倍数与升级结果是否符合 RULE.md
+func CheckGameSettlement(gameID string) ([]RuleViolation, error) {
+	logs, err := GetGameActionLogs(gameID)
+	if err != nil {
+		return nil, err
+	}
+	sort.SliceStable(logs, func(i, j int) bool { return logs[i].ID < logs[j].ID })
+
+	var out []RuleViolation
+	add := func(kind, format string, args ...interface{}) {
+		out = append(out, RuleViolation{Kind: kind, Detail: fmt.Sprintf(format, args...)})
+	}
+
+	var start playingStart
+	hasStart := false
+	friendRevealed := false
+	friendSeat := 0
+	calledSolo := false
+	var kickData *bottomKickData
+	var kickRes *bottomKickResult
+	var results []gameEndResult
+	hasEnd := false
+
+	for _, l := range logs {
+		switch l.ActionType {
+		case "playing_start":
+			if json.Unmarshal(l.ActionData, &start) == nil {
+				hasStart = true
+			}
+		case "friend_revealed":
+			friendRevealed = true
+			var fr struct {
+				FriendSeat int `json:"friendSeat"`
+			}
+			if len(l.ResultData) > 0 && json.Unmarshal(l.ResultData, &fr) == nil {
+				friendSeat = fr.FriendSeat
+			}
+		case "call_friend":
+			var cf struct {
+				IsSolo bool `json:"is_solo_mode"`
+			}
+			if len(l.ResultData) > 0 && json.Unmarshal(l.ResultData, &cf) == nil && cf.IsSolo {
+				calledSolo = true
+			}
+		case "bottom_kick":
+			var d bottomKickData
+			var r bottomKickResult
+			if json.Unmarshal(l.ActionData, &d) == nil {
+				kickData = &d
+			}
+			if len(l.ResultData) > 0 && json.Unmarshal(l.ResultData, &r) == nil {
+				kickRes = &r
+			}
+		case "game_end":
+			var wrap struct {
+				Results []gameEndResult `json:"results"`
+			}
+			if json.Unmarshal(l.ActionData, &wrap) == nil {
+				results = wrap.Results
+				hasEnd = true
+			}
+		}
+	}
+
+	if !hasStart || !hasEnd {
+		return out, nil // 没打完的局不核对结算
+	}
+
+	// 抠底倍数：RULE.md 6.2 倍数 = 2^(n-1)，多种牌型按最大牌型算
+	if kickData != nil && kickRes != nil && kickData.Kicked {
+		want := 1
+		switch kickData.LastTrickType {
+		case "single":
+			want = 1
+		case "pair":
+			want = 2
+		case "triple":
+			want = 4
+		case "tractor":
+			want = 1 << (len(kickData.LastTrick) - 1)
+		case "throw":
+			counts := suitValueCounts(kickData.LastTrick)
+			want = 1
+			for _, c := range counts {
+				if c >= 3 {
+					want = 4
+					break
+				}
+				if c >= 2 && want < 2 {
+					want = 2
+				}
+			}
+		}
+		if kickRes.Multiplier != want {
+			add("抠底倍数(6.2)", "抠底牌型 %s（%d张），应为 ×%d，实际 ×%d",
+				kickData.LastTrickType, len(kickData.LastTrick), want, kickRes.Multiplier)
+		}
+
+		basePoints := 0
+		for _, c := range kickData.BottomCards {
+			basePoints += getCardPoints(c)
+		}
+		if kickRes.BottomPoints != basePoints*kickRes.Multiplier {
+			add("抠底得分(6.2)", "底牌 %d 分 × %d 应为 %d，实际记 %d",
+				basePoints, kickRes.Multiplier, basePoints*kickRes.Multiplier, kickRes.BottomPoints)
+		}
+	}
+
+	// 升级：RULE.md 7.2 / 7.3
+	if len(results) > 0 {
+		score := results[0].Score
+		// 独打的两种情形：叫的牌全在庄家自己手上(call_friend 标了 is_solo_mode)，
+		// 或者叫的牌整局没被人打出来(没有 friend_revealed)。
+		isSolo := calledSolo || !friendRevealed
+		dealerSide := map[string]bool{}
+		for seatStr, h := range start.Hands {
+			seat := 0
+			fmt.Sscanf(seatStr, "%d", &seat)
+			if seat == start.DealerSeat {
+				dealerSide[h.UserID] = true
+			}
+		}
+		// 朋友座位以 friend_revealed 日志为准（开局快照那会儿还没亮相）
+		if friendRevealed && friendSeat > 0 && friendSeat != start.DealerSeat {
+			if h, ok := start.Hands[fmt.Sprintf("%d", friendSeat)]; ok {
+				dealerSide[h.UserID] = true
+			}
+		}
+
+		for _, r := range results {
+			isDealerSide := dealerSide[r.UserID]
+			// 谁赢：抓分方 >= 120 则抓分方赢
+			defenderWins := score < 120
+			var wantUp int
+			if isDealerSide == defenderWins {
+				wantUp = CalculateLevelUpPerRule(score, isSolo, defenderWins)
+			} else {
+				wantUp = 0
+			}
+			oi, ni := levelIndex(r.OldLevel), levelIndex(r.NewLevel)
+			if oi < 0 || ni < 0 {
+				add("升级(7.x)", "玩家 %s 的等级 %s→%s 不在 2..A 序列里", r.UserID, r.OldLevel, r.NewLevel)
+				continue
+			}
+			gotUp := ni - oi
+			// A 是顶，升到 A 就封顶，按封顶后的目标等级比
+			wantIdx := oi + wantUp
+			if wantIdx > len(levelOrder)-1 {
+				wantIdx = len(levelOrder) - 1
+			}
+			if ni != wantIdx {
+				side := "抓分方"
+				if isDealerSide {
+					side = "庄家方"
+				}
+				capped := ""
+				if oi+wantUp > len(levelOrder)-1 {
+					capped = "（封顶到A）"
+				}
+				add("升级(7.x)", "%s玩家 %s：抓分方得 %d 分%s，应升 %d 级到 %s%s，实际 %s→%s 升 %d 级",
+					side, r.UserID, score, soloTag(isSolo), wantUp, levelOrder[wantIdx], capped,
+					r.OldLevel, r.NewLevel, gotUp)
+			}
+		}
+	}
+
+	return out, nil
+}
+
+func soloTag(isSolo bool) string {
+	if isSolo {
+		return "（独打局）"
+	}
+	return "（正常局）"
+}
+
+// CalculateLevelUpPerRule 严格按 RULE.md 7.2 / 7.3 的表算，用来和代码实现对照
+func CalculateLevelUpPerRule(score int, isSolo bool, defenderWins bool) int {
+	if isSolo {
+		if defenderWins { // 庄家方赢
+			switch {
+			case score == 0:
+				return 9
+			case score < 60:
+				return 6
+			default:
+				return 3
+			}
+		}
+		if score >= 180 {
+			return 2
+		}
+		return 1
+	}
+	if defenderWins {
+		switch {
+		case score == 0:
+			return 3
+		case score < 60:
+			return 2
+		default:
+			return 1
+		}
+	}
+	switch {
+	case score >= 300:
+		return 4
+	case score >= 240:
+		return 3
+	case score >= 180:
+		return 2
+	default:
+		return 1
+	}
 }

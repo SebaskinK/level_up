@@ -79,6 +79,10 @@ func main() {
 		fmt.Printf("\n=== %s ===\n", id)
 		fmt.Printf("  主花色=%s 级牌=%s 庄家=座位%d | %d 墩 / %d 手 / 场上 %d 分\n",
 			res.TrumpSuit, res.TrumpRank, res.DealerSeat, res.Tricks, res.Plays, res.TotalPoint)
+		sv, serr := models.CheckGameSettlement(id)
+		if serr == nil && len(sv) > 0 {
+			res.Violations = append(res.Violations, sv...)
+		}
 		if len(res.Violations) == 0 {
 			fmt.Println("  ✓ 没发现规则问题")
 			continue

@@ -2406,6 +2406,20 @@ func PassTurn(gameID, userID string) (*PlayResult, error) {
 		NextPlayer: nextPlayer,
 	}
 
+	LogGameAction(GameActionLogRequest{
+		GameID:     gameID,
+		ActionType: "pass_turn",
+		PlayerSeat: playerSeat,
+		PlayerID:   userID,
+		ActionData: map[string]interface{}{
+			"handCount":  len(hand.Cards),
+			"trickSoFar": len(table.CurrentTrick),
+		},
+		ResultData: map[string]interface{}{
+			"nextPlayer": nextPlayer,
+		},
+	})
+
 	// Count this pass toward the trick completion check
 	table.TrickPassCount++
 
@@ -2510,6 +2524,7 @@ func PlayCardsGame(gameID, userID string, cardIndices []int) (*PlayResult, error
 	isLead := len(table.CurrentTrick) == 0
 	if isLead && len(cardsToPlay) >= 2 {
 		// Check for throw cards validation
+		attemptedThrow := append([]Card(nil), cardsToPlay...)
 		throwResult := ValidateThrowCards(cardsToPlay, table, playerSeat)
 
 		if !throwResult.IsValid && len(throwResult.ActualPlay) < len(cardsToPlay) {
@@ -2535,6 +2550,37 @@ func PlayCardsGame(gameID, userID string, cardIndices []int) (*PlayResult, error
 			cardIndices = actualCardIndices
 			cardsToPlay = throwResult.ActualPlay
 			fmt.Printf("甩牌失败: %s，只出最小牌\n", throwResult.Reason)
+
+			LogGameAction(GameActionLogRequest{
+				GameID:     gameID,
+				ActionType: "throw_rejected",
+				PlayerSeat: playerSeat,
+				PlayerID:   userID,
+				ActionData: map[string]interface{}{
+					"attempted": attemptedThrow,
+					"kept":      throwResult.ActualPlay,
+				},
+				ResultData: map[string]interface{}{
+					"reason":       throwResult.Reason,
+					"blockerSeat":  throwResult.BlockerSeat,
+					"blockerCard":  throwResult.BlockerCard,
+					"attemptCount": len(attemptedThrow),
+					"keptCount":    len(throwResult.ActualPlay),
+				},
+			})
+		} else if throwResult.IsValid {
+			LogGameAction(GameActionLogRequest{
+				GameID:     gameID,
+				ActionType: "throw_accepted",
+				PlayerSeat: playerSeat,
+				PlayerID:   userID,
+				ActionData: map[string]interface{}{
+					"cards": cardsToPlay,
+				},
+				ResultData: map[string]interface{}{
+					"count": len(cardsToPlay),
+				},
+			})
 		}
 	}
 
@@ -2567,6 +2613,22 @@ func PlayCardsGame(gameID, userID string, cardIndices []int) (*PlayResult, error
 				table.FriendRevealed = true
 				table.FriendSeat = playerSeat
 				hand.IsFriend = true
+
+				LogGameAction(GameActionLogRequest{
+					GameID:     gameID,
+					ActionType: "friend_revealed",
+					PlayerSeat: playerSeat,
+					PlayerID:   userID,
+					ActionData: map[string]interface{}{
+						"calledCard": fmt.Sprintf("%s%s", table.HostCalledCard.Suit, table.HostCalledCard.Value),
+						"position":   table.HostCalledCard.Position,
+						"playedNth":  table.HostCalledCard.Count,
+					},
+					ResultData: map[string]interface{}{
+						"friendSeat": playerSeat,
+						"dealerSeat": table.DealerSeat,
+					},
+				})
 			}
 		}
 	}
@@ -4824,6 +4886,18 @@ func finalizeDealerAndStartPlaying(table *GameTable) (*GameTable, error) {
 			}
 
 			// 自动扣底
+			LogGameAction(GameActionLogRequest{
+				GameID:     table.GameID,
+				ActionType: "ai_auto_discard",
+				PlayerSeat: table.DealerSeat,
+				PlayerID:   dealerHand.UserID,
+				ActionData: map[string]interface{}{
+					"strategy":     "lowest7",
+					"handBefore":   len(dealerHand.Cards),
+					"discardIndex": discardIndices,
+				},
+				ResultData: map[string]interface{}{"dealerSeat": table.DealerSeat},
+			})
 			DiscardBottomCards(table.GameID, dealerHand.UserID, discardIndices)
 
 			// 扣底完成后，自动叫朋友：黑桃A第1张
@@ -4837,6 +4911,14 @@ func finalizeDealerAndStartPlaying(table *GameTable) (*GameTable, error) {
 					_, err = CallFriendCard(table.GameID, dealerHand.UserID, "hearts", "A", 1)
 					if err != nil {
 						fmt.Printf("AI auto-call friend failed: %v\n", err)
+						LogGameAction(GameActionLogRequest{
+							GameID:     table.GameID,
+							ActionType: "ai_call_friend_failed",
+							PlayerSeat: table.DealerSeat,
+							PlayerID:   dealerHand.UserID,
+							ActionData: map[string]interface{}{"tried": []string{"spadesA", "heartsA"}},
+							ResultData: map[string]interface{}{"error": err.Error()},
+						})
 					}
 				}
 			}

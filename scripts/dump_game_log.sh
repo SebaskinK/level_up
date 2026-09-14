@@ -49,9 +49,13 @@ OUT="${2:-game_${GAME_ID}.txt}"
            '，每人' || (action_data->>'totalCardsPerPlayer') || '张'
       when 'dealing_complete' then '发牌完成，共发' || (action_data->>'totalDealt') ||
            '张，底牌' || jsonb_array_length(action_data->'bottomCards') || '张，转入' || (result_data->>'callPhase')
-      when 'call_dealer' then '亮庄'
       when 'pass_call' then '不叫庄'
-      when 'flip_bottom' then '翻底牌定庄'
+      when 'flip_bottom' then '翻开第' || (action_data->>'flipped_count') || '张底牌：' ||
+           (case action_data->'card'->>'suit' when 'spades' then '黑' when 'hearts' then '红'
+                                              when 'clubs' then '梅' when 'diamonds' then '方'
+                                              else '王' end) || (action_data->'card'->>'value')
+      when 'call_dealer' then '亮庄：' || coalesce(action_data->>'suit','') || ' ' ||
+           coalesce(action_data->>'count','') || '张'
       when 'dealer_settled' then '定庄，庄家座位' || (action_data->>'dealerSeat') ||
            '，主花色' || coalesce(nullif(action_data->>'trumpSuit',''),'(无)') ||
            case when (result_data->>'byFlip')::bool then '（翻牌定庄）' else '（亮庄）' end
@@ -71,6 +75,14 @@ OUT="${2:-game_${GAME_ID}.txt}"
            case when (action_data->>'is_lead')::bool then '  (领出)' else '' end
       when 'trick_complete' then '第' || (action_data->>'trick_number') || '墩结束，座位' ||
            (result_data->>'winner_seat') || '赢，得' || (result_data->>'points_collected') || '分'
+      when 'friend_revealed' then '朋友亮相：座位' || (result_data->>'friendSeat') ||
+           ' 打出了 ' || (action_data->>'calledCard') || '（第' || (action_data->>'position') || '张）'
+      when 'throw_accepted' then '甩牌成功，' || (result_data->>'count') || '张'
+      when 'throw_rejected' then '甩牌失败：' || (result_data->>'reason') ||
+           '，收回后只出' || (result_data->>'keptCount') || '张'
+      when 'pass_turn' then '这一手不出'
+      when 'ai_auto_discard' then '机器人庄家自动扣底（选最小7张）'
+      when 'ai_call_friend_failed' then '机器人叫朋友失败：' || (result_data->>'error')
       when 'bottom_kick' then case when (action_data->>'kicked')::bool
              then '抠底成功，倍数×' || (result_data->>'multiplier') ||
                   '，底牌得' || (result_data->>'bottomPoints') || '分'

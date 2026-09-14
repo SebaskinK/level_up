@@ -246,7 +246,7 @@ func TestLevelUpNormalGame(t *testing.T) {
 	}
 }
 
-// RULE.md 7.3 独打局升级表（庄家 1 打 4）
+// RULE.md 7.3 独打局升级表（庄家 1 打 4）：庄家升级翻 3 倍，抓分方与正常局相同
 func TestLevelUpSoloGame(t *testing.T) {
 	cases := []struct {
 		score       int
@@ -254,20 +254,45 @@ func TestLevelUpSoloGame(t *testing.T) {
 		dealerWins  bool
 		wantLevelUp int
 	}{
-		{0, "大光", true, 9},
-		{1, "小光", true, 6},
-		{59, "小光", true, 6},
-		{60, "小胜", true, 3},
-		{119, "小胜", true, 3},
+		{0, "大光 3×3", true, 9},
+		{1, "小光 2×3", true, 6},
+		{59, "小光 2×3", true, 6},
+		{60, "小胜 1×3", true, 3},
+		{119, "小胜 1×3", true, 3},
 		{120, "反超", false, 1},
 		{179, "反超", false, 1},
-		{180, "惨败", false, 2},
-		{300, "惨败", false, 2},
+		{180, "大胜", false, 2},
+		{239, "大胜", false, 2},
+		{240, "完胜", false, 3},
+		{299, "完胜", false, 3},
+		{300, "满光", false, 4},
 	}
 	for _, c := range cases {
 		got := CalculateLevelUp(c.score, true, c.dealerWins)
 		if got != c.wantLevelUp {
 			t.Errorf("独打局 %d 分(%s)：应升 %d 级，实际 %d 级", c.score, c.desc, c.wantLevelUp, got)
+		}
+	}
+}
+
+// 独打局抓分方的升级级数必须和正常局一致（只有庄家翻倍）
+func TestSoloDefenderSameAsNormal(t *testing.T) {
+	for _, score := range []int{120, 150, 179, 180, 200, 239, 240, 270, 299, 300} {
+		solo := CalculateLevelUp(score, true, false)
+		normal := CalculateLevelUp(score, false, false)
+		if solo != normal {
+			t.Errorf("%d 分抓分方：独打升 %d 级，正常局升 %d 级，应当相同", score, solo, normal)
+		}
+	}
+}
+
+// 独打局庄家的升级级数必须正好是正常局的 3 倍
+func TestSoloDealerIsTripleOfNormal(t *testing.T) {
+	for _, score := range []int{0, 1, 30, 59, 60, 90, 119} {
+		solo := CalculateLevelUp(score, true, true)
+		normal := CalculateLevelUp(score, false, true)
+		if solo != normal*3 {
+			t.Errorf("%d 分庄家：独打升 %d 级，正常局 %d 级×3 应为 %d 级", score, solo, normal, normal*3)
 		}
 	}
 }

@@ -2131,41 +2131,27 @@ func sortCards(cards []Card) []Card {
 //	isSolo           是否独打局（庄家 1 打 4）
 //	winnerIsDealer   获胜的是不是庄家方
 //
+// 独打局只有庄家升级时翻 3 倍，抓分方的级数与正常局相同（RULE.md 7.3）。
 // 落败一方不升级，由调用方负责只给获胜方套用这个级数。
 func CalculateLevelUp(score int, isSolo bool, winnerIsDealer bool) int {
 	if winnerIsDealer {
 		// 庄家方守住了（抓分方不足 120 分）
-		if isSolo {
-			// 7.3 独打局
-			switch {
-			case score == 0:
-				return 9 // 大光
-			case score < 60:
-				return 6 // 小光
-			default:
-				return 3 // 小胜（60-119）
-			}
-		}
-		// 7.2 正常局
+		var up int
 		switch {
 		case score == 0:
-			return 3 // 大光
+			up = 3 // 大光
 		case score < 60:
-			return 2 // 小光
+			up = 2 // 小光
 		default:
-			return 1 // 小胜（60-119）
+			up = 1 // 小胜（60-119）
 		}
+		if isSolo {
+			up *= 3 // 一个人扛四个人，赢了多拿
+		}
+		return up
 	}
 
-	// 抓分方上台
-	if isSolo {
-		// 7.3 独打局：120-179 反超升 1 级，180 分及以上惨败升 2 级
-		if score >= 180 {
-			return 2
-		}
-		return 1
-	}
-	// 7.2 正常局
+	// 抓分方上台：独打与正常局一致
 	switch {
 	case score >= 300:
 		return 4 // 满光

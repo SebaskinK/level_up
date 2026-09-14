@@ -492,7 +492,9 @@ func checkLevelUpTable() []RuleViolation {
 		up    int
 	}{
 		{120, "反超", 1}, {179, "反超", 1},
-		{180, "惨败", 2}, {300, "惨败", 2},
+		{180, "大胜", 2}, {239, "大胜", 2},
+		{240, "完胜", 3}, {299, "完胜", 3},
+		{300, "满光", 4},
 	}
 	for _, c := range soloDefender {
 		got := CalculateLevelUp(c.score, true, false)
@@ -755,33 +757,23 @@ func soloTag(isSolo bool) string {
 	return "（正常局）"
 }
 
-// CalculateLevelUpPerRule 严格按 RULE.md 7.2 / 7.3 的表算，用来和代码实现对照
+// CalculateLevelUpPerRule 严格按 RULE.md 7.2 / 7.3 的表算，用来和代码实现对照。
+// 独打局只有庄家升级翻 3 倍，抓分方与正常局相同。
 func CalculateLevelUpPerRule(score int, isSolo bool, defenderWins bool) int {
-	if isSolo {
-		if defenderWins { // 庄家方赢
-			switch {
-			case score == 0:
-				return 9
-			case score < 60:
-				return 6
-			default:
-				return 3
-			}
-		}
-		if score >= 180 {
-			return 2
-		}
-		return 1
-	}
-	if defenderWins {
+	if defenderWins { // 庄家方赢
+		var up int
 		switch {
 		case score == 0:
-			return 3
+			up = 3
 		case score < 60:
-			return 2
+			up = 2
 		default:
-			return 1
+			up = 1
 		}
+		if isSolo {
+			up *= 3
+		}
+		return up
 	}
 	switch {
 	case score >= 300:

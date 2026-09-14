@@ -2125,36 +2125,56 @@ func sortCards(cards []Card) []Card {
 // | 闲家得分范围 | 结果 | 庄家升级 | 闲家升级 |
 // | 0 - 119 分  | 庄胜 | 升 1 级 | 不升级 |
 // | 120 - 179 分 | 反超 | 不升级 | 每人升 1 级 |
-// | 180 分及以上 | 大胜 | 不升级 | 每人升 2 级 |
-func CalculateLevelUp(score int, isSolo bool, winnerIsDefender bool) int {
+// CalculateLevelUp 按 RULE.md 7.2 / 7.3 算获胜方每人升几级。
+//
+//	score            抓分方（非庄家方）本局总得分
+//	isSolo           是否独打局（庄家 1 打 4）
+//	winnerIsDealer   获胜的是不是庄家方
+//
+// 落败一方不升级，由调用方负责只给获胜方套用这个级数。
+func CalculateLevelUp(score int, isSolo bool, winnerIsDealer bool) int {
+	if winnerIsDealer {
+		// 庄家方守住了（抓分方不足 120 分）
+		if isSolo {
+			// 7.3 独打局
+			switch {
+			case score == 0:
+				return 9 // 大光
+			case score < 60:
+				return 6 // 小光
+			default:
+				return 3 // 小胜（60-119）
+			}
+		}
+		// 7.2 正常局
+		switch {
+		case score == 0:
+			return 3 // 大光
+		case score < 60:
+			return 2 // 小光
+		default:
+			return 1 // 小胜（60-119）
+		}
+	}
+
+	// 抓分方上台
 	if isSolo {
-		// 独打局（庄家 1 打 4）
-		if winnerIsDefender {
-			// 庄家（防守方）获胜：闲家得分 0-119，庄家升 1 级
-			return 1
-		} else {
-			// 闲家获胜
-			if score >= 180 {
-				return 2 // 大胜，闲家每人升 2 级
-			}
-			return 1 // 反超（120-179分），闲家每人升 1 级
+		// 7.3 独打局：120-179 反超升 1 级，180 分及以上惨败升 2 级
+		if score >= 180 {
+			return 2
 		}
-	} else {
-		// 正常局（庄家找到盟友，2 打 3）
-		if winnerIsDefender {
-			// 庄家方获胜：闲家得分 0-119，庄家升 1 级
-			return 1
-		} else {
-			// 闲家获胜
-			if score >= 300 {
-				return 4 // 满光，闲家每人升 4 级
-			} else if score >= 240 {
-				return 3 // 完胜，闲家每人升 3 级
-			} else if score >= 180 {
-				return 2 // 大胜，闲家每人升 2 级
-			}
-			return 1 // 反超（120-179分），闲家每人升 1 级
-		}
+		return 1
+	}
+	// 7.2 正常局
+	switch {
+	case score >= 300:
+		return 4 // 满光
+	case score >= 240:
+		return 3 // 完胜
+	case score >= 180:
+		return 2 // 大胜
+	default:
+		return 1 // 反超（120-179）
 	}
 }
 
@@ -2726,19 +2746,25 @@ func PlayCardsGame(gameID, userID string, cardIndices []int) (*PlayResult, error
 			result.FinalScore = totalPoints
 
 			// Determine winner team based on score
-			if totalPoints > 120 {
-				result.WinnerTeam = "guest" // 抓分方获胜（得分超过120）
+			// RULE.md 7.2 / 7.3：120 分起就是「反超」，抓分方上台。
+			// 120 这一档属于抓分方，不能写成 > 120。
+			if totalPoints >= 120 {
+				result.WinnerTeam = "guest" // 抓分方获胜（得分 120 及以上）
 			} else {
-				result.WinnerTeam = "host" // 庄家方获胜（得分≤120）
+				result.WinnerTeam = "host" // 庄家方获胜（得分不足 120）
 			}
 
 			// Calculate level changes
 			game, err := GetGame(gameID)
 			if err == nil && game != nil {
-				// Determine if solo mode (friend not revealed or no friend)
-				isSolo := !table.FriendRevealed
-				winnerIsHost := result.WinnerTeam == "host"
-				levelUp := CalculateLevelUp(totalPoints, isSolo, winnerIsHost)
+				// 独打的两种情形：
+				//   1. 叫的朋友牌全在庄家自己手上，CallFriendCard 会把 IsSoloMode 置 true
+				//      （注意它同时会把 FriendRevealed 置 true 表示"没有另外的朋友"，
+				//        所以不能用 !FriendRevealed 判独打，那样真独打反而会被当成 2 打 3）
+				//   2. 叫的牌整局没人打出来，朋友始终没亮相
+				isSolo := table.IsSoloMode || !table.FriendRevealed
+				winnerIsDealer := result.WinnerTeam == "host"
+				levelUp := CalculateLevelUp(totalPoints, isSolo, winnerIsDealer)
 
 				gameResults := make([]GameResult, 0)
 				for _, playerID := range game.PlayerIDs {

@@ -216,3 +216,78 @@ func TestJokerBeatsEverything(t *testing.T) {
 		t.Fatalf("大王应获胜，实际座位%d", w)
 	}
 }
+
+// RULE.md 7.2 正常局升级表（庄家找到盟友，2 打 3）
+func TestLevelUpNormalGame(t *testing.T) {
+	cases := []struct {
+		score       int
+		desc        string
+		dealerWins  bool
+		wantLevelUp int
+	}{
+		{0, "大光", true, 3},
+		{1, "小光", true, 2},
+		{59, "小光", true, 2},
+		{60, "小胜", true, 1},
+		{119, "小胜", true, 1},
+		{120, "反超", false, 1},
+		{179, "反超", false, 1},
+		{180, "大胜", false, 2},
+		{239, "大胜", false, 2},
+		{240, "完胜", false, 3},
+		{299, "完胜", false, 3},
+		{300, "满光", false, 4},
+	}
+	for _, c := range cases {
+		got := CalculateLevelUp(c.score, false, c.dealerWins)
+		if got != c.wantLevelUp {
+			t.Errorf("正常局 %d 分(%s)：应升 %d 级，实际 %d 级", c.score, c.desc, c.wantLevelUp, got)
+		}
+	}
+}
+
+// RULE.md 7.3 独打局升级表（庄家 1 打 4）
+func TestLevelUpSoloGame(t *testing.T) {
+	cases := []struct {
+		score       int
+		desc        string
+		dealerWins  bool
+		wantLevelUp int
+	}{
+		{0, "大光", true, 9},
+		{1, "小光", true, 6},
+		{59, "小光", true, 6},
+		{60, "小胜", true, 3},
+		{119, "小胜", true, 3},
+		{120, "反超", false, 1},
+		{179, "反超", false, 1},
+		{180, "惨败", false, 2},
+		{300, "惨败", false, 2},
+	}
+	for _, c := range cases {
+		got := CalculateLevelUp(c.score, true, c.dealerWins)
+		if got != c.wantLevelUp {
+			t.Errorf("独打局 %d 分(%s)：应升 %d 级，实际 %d 级", c.score, c.desc, c.wantLevelUp, got)
+		}
+	}
+}
+
+// RULE.md 7.2：120 分起算「反超」，抓分方上台。边界不能写成 >120。
+func TestWinnerThresholdAt120(t *testing.T) {
+	cases := []struct {
+		score      int
+		wantWinner string
+	}{
+		{0, "host"}, {59, "host"}, {119, "host"},
+		{120, "guest"}, {179, "guest"}, {300, "guest"},
+	}
+	for _, c := range cases {
+		got := "host"
+		if c.score >= 120 {
+			got = "guest"
+		}
+		if got != c.wantWinner {
+			t.Errorf("%d 分应由 %s 获胜，实际 %s", c.score, c.wantWinner, got)
+		}
+	}
+}

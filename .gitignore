@@ -47,3 +47,6 @@ init.sh
 
 # 规则校验器编译产物
 backend/rulecheck
+
+# SSH 私钥（本地专用，绝不提交）
+.ssh-keys/
